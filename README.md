@@ -9,16 +9,18 @@ A comprehensive multi-agent system designed to streamline inventory management, 
 - **Inventory Management**: Real-time stock tracking with automatic reordering
 - **Sales Processing**: Seamless transaction handling and delivery scheduling
 - **Financial Reporting**: Comprehensive financial monitoring and reporting
+- **OpenAI-Powered Agents**: All business logic agents are powered by OpenAI models via the pydantic-ai framework
 
 ## 🏗️ Architecture
 
-The system consists of 5 specialized agents:
+The system consists of 4 specialized OpenAI-powered agents, orchestrated by a main function:
 
-1. **Orchestrator Agent**: Main coordinator and request processor
-2. **Inventory Agent**: Stock management and reorder assessment
-3. **Quoting Agent**: Quote generation and pricing strategy
-4. **Sales Agent**: Transaction processing and delivery management
-5. **Financial Agent**: Financial reporting and cash flow monitoring
+1. **Inventory Agent**: Stock management and reorder assessment
+2. **Quoting Agent**: Quote generation and pricing strategy
+3. **Sales Agent**: Transaction processing and delivery management
+4. **Financial Agent**: Financial reporting and cash flow monitoring
+
+All agents are implemented using the [pydantic-ai](https://github.com/ContextualAI/pydantic-ai) framework and use OpenAI models for reasoning and tool selection.
 
 ## 📋 Requirements
 
@@ -26,6 +28,8 @@ The system consists of 5 specialized agents:
 - pandas
 - SQLAlchemy
 - python-dotenv
+- pydantic-ai
+- openai
 
 ## 🛠️ Installation
 
@@ -33,8 +37,12 @@ The system consists of 5 specialized agents:
 2. Install dependencies:
    ```bash
    pip install -r requirements.txt
+   pip install pydantic-ai openai
    ```
-3. Set up your environment variables (if using OpenAI integration)
+3. Set your OpenAI API key as an environment variable:
+   ```bash
+   export OPENAI_API_KEY=sk-...
+   ```
 4. Run the system:
    ```bash
    python project_starter.py
@@ -77,6 +85,7 @@ The system uses the following configuration:
 - **Inventory Coverage**: 40% of available items
 - **Bulk Discounts**: 2-15% based on order size
 - **Reorder Threshold**: 100 units minimum
+- **OpenAI Model**: gpt-4o-mini (configurable in code)
 
 ## 📚 Documentation
 
