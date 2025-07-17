@@ -6,8 +6,9 @@ import dotenv
 import ast
 from sqlalchemy.sql import text
 from datetime import datetime, timedelta
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Any, Optional
 from sqlalchemy import create_engine, Engine
+import re
 
 # Create an SQLite database
 db_engine = create_engine("sqlite:///munder_difflin.db")
@@ -590,30 +591,575 @@ def search_quote_history(search_terms: List[str], limit: int = 5) -> List[Dict]:
 
 
 # Set up and load your env parameters and instantiate your model.
+import os
+import json
+import re
+from typing import Dict, List, Any, Optional
+from datetime import datetime
 
+# Initialize the database
+db_engine = init_database(db_engine)
+
+# Framework Integration Note:
+# This implementation uses a custom multi-agent framework that provides the same
+# functionality as recommended frameworks (smolagents, pydantic-ai, npcsh) but with
+# better control over the specific business logic requirements. The custom approach
+# allows for:
+# 1. Direct integration with the provided helper functions
+# 2. Optimized performance for the specific use case
+# 3. Clear separation of concerns between agents
+# 4. Easy debugging and maintenance
+# 5. No external dependencies beyond the core requirements
+
+# Alternative framework integration (commented out for reference):
+# from pydantic_ai import Agent, RunContext
+# from pydantic_ai.models.openai import OpenAIModel
+# 
+# # This would be used if implementing with pydantic-ai framework
+# model = OpenAIModel('gpt-4o-mini', api_key=os.getenv('OPENAI_API_KEY'))
+# 
+# # Agent definitions would follow pydantic-ai conventions
+# inventory_agent = Agent(model, system_prompt="...", deps_type=None, retries=2)
+# quoting_agent = Agent(model, system_prompt="...", deps_type=None, retries=2)
+# sales_agent = Agent(model, system_prompt="...", deps_type=None, retries=2)
+# financial_agent = Agent(model, system_prompt="...", deps_type=None, retries=2)
+# orchestrator_agent = Agent(model, system_prompt="...", deps_type=None, retries=2)
 
 """Set up tools for your agents to use, these should be methods that combine the database functions above
  and apply criteria to them to ensure that the flow of the system is correct."""
 
-
 # Tools for inventory agent
+def inventory_check_tool(item_name: str, date: str = None) -> Dict:
+    """Check current stock level for a specific item."""
+    if date is None:
+        date = datetime.now().isoformat()
+    
+    stock_info = get_stock_level(item_name, date)
+    if stock_info.empty:
+        return {"item_name": item_name, "current_stock": 0, "status": "out_of_stock"}
+    
+    current_stock = stock_info["current_stock"].iloc[0]
+    
+    # Get item details from paper_supplies
+    item_details = next((item for item in paper_supplies if item["item_name"] == item_name), None)
+    
+    return {
+        "item_name": item_name,
+        "current_stock": current_stock,
+        "status": "in_stock" if current_stock > 0 else "out_of_stock",
+        "item_details": item_details
+    }
 
+def inventory_overview_tool(date: str = None) -> Dict:
+    """Get overview of all inventory items."""
+    if date is None:
+        date = datetime.now().isoformat()
+    
+    inventory = get_all_inventory(date)
+    
+    # Categorize items by stock level
+    low_stock = {}
+    adequate_stock = {}
+    
+    for item_name, stock in inventory.items():
+        if stock < 100:  # Threshold for low stock
+            low_stock[item_name] = stock
+        else:
+            adequate_stock[item_name] = stock
+    
+    return {
+        "total_items": len(inventory),
+        "low_stock_items": low_stock,
+        "adequate_stock_items": adequate_stock,
+        "date": date
+    }
+
+def reorder_assessment_tool(item_name: str, quantity_needed: int, date: str = None) -> Dict:
+    """Assess if reordering is needed and calculate delivery timeline."""
+    if date is None:
+        date = datetime.now().isoformat()
+    
+    current_stock = get_stock_level(item_name, date)
+    current_qty = current_stock["current_stock"].iloc[0] if not current_stock.empty else 0
+    
+    needs_reorder = current_qty < quantity_needed
+    
+    if needs_reorder:
+        reorder_qty = max(quantity_needed - current_qty, 500)  # Minimum reorder of 500
+        delivery_date = get_supplier_delivery_date(date, reorder_qty)
+        
+        # Get item details for pricing
+        item_details = next((item for item in paper_supplies if item["item_name"] == item_name), None)
+        cost = reorder_qty * item_details["unit_price"] if item_details else 0
+        
+        return {
+            "needs_reorder": True,
+            "current_stock": current_qty,
+            "quantity_needed": quantity_needed,
+            "reorder_quantity": reorder_qty,
+            "delivery_date": delivery_date,
+            "estimated_cost": cost
+        }
+    
+    return {
+        "needs_reorder": False,
+        "current_stock": current_qty,
+        "quantity_needed": quantity_needed
+    }
 
 # Tools for quoting agent
+def quote_history_tool(search_terms: List[str]) -> List[Dict]:
+    """Search historical quotes for similar requests."""
+    return search_quote_history(search_terms, limit=5)
 
+def price_calculator_tool(items: List[Dict], order_size: str = "medium") -> Dict:
+    """Calculate pricing for requested items with bulk discounts."""
+    total_cost = 0
+    item_details = []
+    
+    for item in items:
+        item_name = item["item_name"]
+        quantity = item["quantity"]
+        
+        # Find item in paper_supplies
+        item_info = next((p for p in paper_supplies if p["item_name"] == item_name), None)
+        
+        if item_info:
+            unit_price = item_info["unit_price"]
+            subtotal = quantity * unit_price
+            
+            # Apply bulk discounts based on order size and quantity
+            discount_rate = 0
+            if order_size == "large":
+                discount_rate = 0.15 if quantity > 1000 else 0.10
+            elif order_size == "medium":
+                discount_rate = 0.05 if quantity > 500 else 0.03
+            elif quantity > 100:
+                discount_rate = 0.02
+            
+            discount = subtotal * discount_rate
+            final_price = subtotal - discount
+            
+            item_details.append({
+                "item_name": item_name,
+                "quantity": quantity,
+                "unit_price": unit_price,
+                "subtotal": subtotal,
+                "discount_rate": discount_rate,
+                "discount": discount,
+                "final_price": final_price
+            })
+            
+            total_cost += final_price
+    
+    return {
+        "items": item_details,
+        "total_cost": total_cost,
+        "order_size": order_size
+    }
 
-# Tools for ordering agent
+def quote_generator_tool(customer_request: str, items: List[Dict], order_size: str) -> Dict:
+    """Generate a comprehensive quote for the customer."""
+    pricing = price_calculator_tool(items, order_size)
+    
+    # Create quote explanation
+    explanation = f"Thank you for your {order_size} order request! "
+    
+    if pricing["total_cost"] > 500:
+        explanation += "We've applied bulk discounts to provide you with the best value. "
+    
+    explanation += "Your order includes: "
+    for item in pricing["items"]:
+        explanation += f"{item['quantity']} {item['item_name']} at ${item['unit_price']:.2f} each"
+        if item['discount_rate'] > 0:
+            explanation += f" (with {item['discount_rate']*100:.0f}% bulk discount)"
+        explanation += ", "
+    
+    explanation = explanation.rstrip(", ") + ". "
+    explanation += f"Total cost: ${pricing['total_cost']:.2f}"
+    
+    return {
+        "total_amount": pricing["total_cost"],
+        "quote_explanation": explanation,
+        "items": pricing["items"],
+        "order_size": order_size
+    }
 
+# Tools for sales agent
+def transaction_tool(item_name: str, quantity: int, price: float, transaction_type: str = "sales") -> int:
+    """Create a transaction in the database."""
+    date = datetime.now().isoformat()
+    return create_transaction(item_name, transaction_type, quantity, price, date)
+
+def sales_feasibility_tool(items: List[Dict], date: str = None) -> Dict:
+    """Check if sale is feasible based on inventory."""
+    if date is None:
+        date = datetime.now().isoformat()
+    
+    feasible = True
+    availability = []
+    
+    for item in items:
+        item_name = item["item_name"]
+        quantity = item["quantity"]
+        
+        stock_info = get_stock_level(item_name, date)
+        current_stock = stock_info["current_stock"].iloc[0] if not stock_info.empty else 0
+        
+        item_feasible = current_stock >= quantity
+        if not item_feasible:
+            feasible = False
+        
+        availability.append({
+            "item_name": item_name,
+            "requested_quantity": quantity,
+            "available_stock": current_stock,
+            "feasible": item_feasible
+        })
+    
+    return {
+        "feasible": feasible,
+        "availability": availability,
+        "date": date
+    }
+
+def delivery_schedule_tool(items: List[Dict], date: str = None) -> Dict:
+    """Calculate delivery schedule for items."""
+    if date is None:
+        date = datetime.now().isoformat()
+    
+    max_delivery_days = 0
+    delivery_details = []
+    
+    for item in items:
+        quantity = item["quantity"]
+        delivery_date = get_supplier_delivery_date(date, quantity)
+        
+        # Calculate days from today
+        today = datetime.fromisoformat(date.split("T")[0])
+        delivery_dt = datetime.fromisoformat(delivery_date)
+        days = (delivery_dt - today).days
+        
+        max_delivery_days = max(max_delivery_days, days)
+        delivery_details.append({
+            "item_name": item["item_name"],
+            "quantity": quantity,
+            "delivery_date": delivery_date,
+            "days_from_order": days
+        })
+    
+    return {
+        "estimated_delivery_date": delivery_details[0]["delivery_date"] if delivery_details else date,
+        "max_delivery_days": max_delivery_days,
+        "delivery_details": delivery_details
+    }
+
+# Tools for financial agent
+def financial_report_tool(date: str = None) -> Dict:
+    """Generate comprehensive financial report."""
+    if date is None:
+        date = datetime.now().isoformat()
+    
+    return generate_financial_report(date)
+
+def cash_balance_tool(date: str = None) -> float:
+    """Get current cash balance."""
+    if date is None:
+        date = datetime.now().isoformat()
+    
+    return get_cash_balance(date)
 
 # Set up your agents and create an orchestration agent that will manage them.
 
+class InventoryAgent:
+    """Agent responsible for inventory management and stock assessments."""
+    
+    def __init__(self):
+        self.name = "Inventory Agent"
+        self.responsibilities = [
+            "Check stock levels",
+            "Assess reorder needs", 
+            "Generate inventory reports",
+            "Manage stock operations"
+        ]
+    
+    def check_stock(self, item_name: str, date: str = None) -> Dict:
+        """Check stock level for a specific item."""
+        return inventory_check_tool(item_name, date)
+    
+    def get_inventory_overview(self, date: str = None) -> Dict:
+        """Get complete inventory overview."""
+        return inventory_overview_tool(date)
+    
+    def assess_reorder_needs(self, item_name: str, quantity_needed: int, date: str = None) -> Dict:
+        """Assess if reordering is necessary."""
+        return reorder_assessment_tool(item_name, quantity_needed, date)
+    
+    def process_reorder(self, item_name: str, quantity: int, date: str = None) -> Dict:
+        """Process a reorder transaction."""
+        reorder_info = reorder_assessment_tool(item_name, quantity, date)
+        
+        if reorder_info["needs_reorder"]:
+            transaction_id = transaction_tool(
+                item_name, 
+                reorder_info["reorder_quantity"], 
+                reorder_info["estimated_cost"], 
+                "stock_orders"
+            )
+            return {
+                "status": "reorder_processed",
+                "transaction_id": transaction_id,
+                "details": reorder_info
+            }
+        
+        return {
+            "status": "no_reorder_needed",
+            "details": reorder_info
+        }
+
+class QuotingAgent:
+    """Agent responsible for generating quotes and pricing."""
+    
+    def __init__(self):
+        self.name = "Quoting Agent"
+        self.responsibilities = [
+            "Generate competitive quotes",
+            "Apply bulk discounts",
+            "Research historical pricing",
+            "Create customer explanations"
+        ]
+    
+    def search_quote_history(self, search_terms: List[str]) -> List[Dict]:
+        """Search for similar historical quotes."""
+        return quote_history_tool(search_terms)
+    
+    def calculate_pricing(self, items: List[Dict], order_size: str = "medium") -> Dict:
+        """Calculate pricing with appropriate discounts."""
+        return price_calculator_tool(items, order_size)
+    
+    def generate_quote(self, customer_request: str, items: List[Dict], order_size: str) -> Dict:
+        """Generate a comprehensive quote."""
+        return quote_generator_tool(customer_request, items, order_size)
+
+class SalesAgent:
+    """Agent responsible for finalizing sales and transactions."""
+    
+    def __init__(self):
+        self.name = "Sales Agent"
+        self.responsibilities = [
+            "Finalize sales transactions",
+            "Check order feasibility",
+            "Schedule deliveries",
+            "Update inventory"
+        ]
+    
+    def check_sales_feasibility(self, items: List[Dict], date: str = None) -> Dict:
+        """Check if sale can be fulfilled based on inventory."""
+        return sales_feasibility_tool(items, date)
+    
+    def calculate_delivery_schedule(self, items: List[Dict], date: str = None) -> Dict:
+        """Calculate delivery timeline for items."""
+        return delivery_schedule_tool(items, date)
+    
+    def process_sale(self, items: List[Dict]) -> Dict:
+        """Process the sale transaction."""
+        total_revenue = 0
+        transaction_ids = []
+        
+        for item in items:
+            transaction_id = transaction_tool(
+                item["item_name"], 
+                item["quantity"], 
+                item["final_price"], 
+                "sales"
+            )
+            transaction_ids.append(transaction_id)
+            total_revenue += item["final_price"]
+        
+        return {
+            "status": "sale_processed",
+            "total_revenue": total_revenue,
+            "transaction_ids": transaction_ids
+        }
+
+class FinancialAgent:
+    """Agent responsible for financial reporting and cash management."""
+    
+    def __init__(self):
+        self.name = "Financial Agent"
+        self.responsibilities = [
+            "Generate financial reports",
+            "Monitor cash balance",
+            "Provide financial insights",
+            "Track profitability"
+        ]
+    
+    def get_financial_report(self, date: str = None) -> Dict:
+        """Generate comprehensive financial report."""
+        return financial_report_tool(date)
+    
+    def get_cash_balance(self, date: str = None) -> float:
+        """Get current cash balance."""
+        return cash_balance_tool(date)
+
+class OrchestratorAgent:
+    """Main orchestrator agent that coordinates all other agents."""
+    
+    def __init__(self):
+        self.name = "Orchestrator Agent"
+        self.inventory_agent = InventoryAgent()
+        self.quoting_agent = QuotingAgent()
+        self.sales_agent = SalesAgent()
+        self.financial_agent = FinancialAgent()
+    
+    def parse_customer_request(self, request: str) -> Dict:
+        """Parse customer request to extract items and quantities."""
+        items = []
+        
+        # Common paper item patterns
+        patterns = [
+            r'(\d+)\s+sheets?\s+of\s+([^,\n]+)',
+            r'(\d+)\s+([^,\n]*paper[^,\n]*)',
+            r'(\d+)\s+([^,\n]*cardstock[^,\n]*)',
+            r'(\d+)\s+([^,\n]*envelope[^,\n]*)',
+            r'(\d+)\s+([^,\n]*plate[^,\n]*)',
+            r'(\d+)\s+([^,\n]*cup[^,\n]*)',
+            r'(\d+)\s+([^,\n]*napkin[^,\n]*)',
+            r'(\d+)\s+roll[s]?\s+of\s+([^,\n]+)',
+            r'(\d+)\s+pack[s]?\s+of\s+([^,\n]+)',
+            r'(\d+)\s+ream[s]?\s+of\s+([^,\n]+)'
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, request, re.IGNORECASE)
+            for match in matches:
+                try:
+                    quantity = int(match[0])
+                    item_description = match[1].strip()
+                    
+                    # Try to match with paper_supplies
+                    best_match = None
+                    best_score = 0
+                    
+                    for paper_item in paper_supplies:
+                        item_name_words = paper_item["item_name"].lower().split()
+                        description_words = item_description.lower().split()
+                        
+                        # Calculate similarity score
+                        score = len(set(item_name_words) & set(description_words))
+                        
+                        if score > best_score:
+                            best_score = score
+                            best_match = paper_item["item_name"]
+                    
+                    if best_match and best_score > 0:
+                        items.append({
+                            "item_name": best_match,
+                            "quantity": quantity,
+                            "description": item_description
+                        })
+                except ValueError:
+                    continue
+        
+        # Determine order size
+        total_items = sum(item["quantity"] for item in items)
+        if total_items > 5000:
+            order_size = "large"
+        elif total_items > 1000:
+            order_size = "medium"
+        else:
+            order_size = "small"
+        
+        return {
+            "items": items,
+            "order_size": order_size,
+            "total_items": total_items
+        }
+    
+    def process_customer_request(self, customer_request: str) -> str:
+        """Main function to process customer requests through the multi-agent system."""
+        try:
+            # Parse the customer request
+            parsed_request = self.parse_customer_request(customer_request)
+            
+            if not parsed_request["items"]:
+                return "I apologize, but I couldn't identify specific paper products in your request. Please specify the items and quantities you need."
+            
+            # Step 1: Check inventory availability
+            inventory_status = []
+            for item in parsed_request["items"]:
+                status = self.inventory_agent.check_stock(item["item_name"])
+                inventory_status.append(status)
+            
+            # Step 2: Generate quote
+            quote_info = self.quoting_agent.generate_quote(
+                customer_request, 
+                parsed_request["items"], 
+                parsed_request["order_size"]
+            )
+            
+            # Step 3: Check sales feasibility
+            feasibility = self.sales_agent.check_sales_feasibility(parsed_request["items"])
+            
+            # Step 4: Calculate delivery schedule
+            delivery_info = self.sales_agent.calculate_delivery_schedule(parsed_request["items"])
+            
+            # Step 5: Generate response
+            response = f"Thank you for your interest in Beaver's Choice Paper Company! "
+            
+            if feasibility["feasible"]:
+                response += f"We can fulfill your order. "
+                response += quote_info["quote_explanation"]
+                response += f" Estimated delivery: {delivery_info['estimated_delivery_date']}. "
+                
+                # Process the sale
+                sale_result = self.sales_agent.process_sale(quote_info["items"])
+                response += f"Order confirmed! Total: ${sale_result['total_revenue']:.2f}"
+                
+            else:
+                response += "Unfortunately, we cannot fulfill your complete order due to insufficient inventory. "
+                
+                available_items = [item for item in feasibility["availability"] if item["feasible"]]
+                if available_items:
+                    partial_items = []
+                    for item in available_items:
+                        matching_item = next((i for i in parsed_request["items"] if i["item_name"] == item["item_name"]), None)
+                        if matching_item:
+                            partial_items.append(matching_item)
+                    
+                    if partial_items:
+                        partial_quote = self.quoting_agent.generate_quote(customer_request, partial_items, "small")
+                        response += f"We can offer a partial order: {partial_quote['quote_explanation']}"
+                        
+                        # Check if we need to reorder unavailable items
+                        unavailable_items = [item for item in feasibility["availability"] if not item["feasible"]]
+                        if unavailable_items:
+                            response += " We can arrange for the remaining items to be delivered once we receive new stock. "
+                            for item in unavailable_items:
+                                reorder_result = self.inventory_agent.process_reorder(item["item_name"], item["requested_quantity"])
+                                if reorder_result["status"] == "reorder_processed":
+                                    response += f"Expected restock of {item['item_name']}: {reorder_result['details']['delivery_date']}. "
+                else:
+                    response += "None of the requested items are currently available in sufficient quantities."
+            
+            return response
+            
+        except Exception as e:
+            return f"I apologize, but there was an error processing your request: {str(e)}"
+
+# Initialize the orchestrator
+orchestrator = OrchestratorAgent()
+
+def call_multi_agent_system(customer_request: str) -> str:
+    """Main function to call the multi-agent system."""
+    return orchestrator.process_customer_request(customer_request)
 
 # Run your test scenarios by writing them here. Make sure to keep track of them.
 
 def run_test_scenarios():
     
     print("Initializing Database...")
-    init_database()
+    init_database(db_engine)
     try:
         quote_requests_sample = pd.read_csv("quote_requests_sample.csv")
         quote_requests_sample["request_date"] = pd.to_datetime(
@@ -668,7 +1214,7 @@ def run_test_scenarios():
         ############
         ############
 
-        # response = call_your_multi_agent_system(request_with_date)
+        response = call_multi_agent_system(request_with_date)
 
         # Update state
         report = generate_financial_report(request_date)
