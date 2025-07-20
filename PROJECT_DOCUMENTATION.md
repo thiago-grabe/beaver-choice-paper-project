@@ -230,3 +230,46 @@ The multi-agent system successfully demonstrates all rubric requirements:
 - ✅ Cash balance and inventory value update dynamically
 
 The system provides a solid foundation for the Beaver's Choice Paper Company's digital transformation, with clear paths for future enhancements and scalability. 
+
+## Terminal Output Example
+
+Below is a screenshot of the terminal output demonstrating the system's response to customer requests, showcasing the transparency and explainability of the outputs:
+
+![Terminal Output](output_example.png)
+
+The output includes:
+- Customer request context and date
+- Cash balance and inventory value before and after processing
+- Detailed response with pricing, discounts, and delivery estimates
+- Justifications for partial or unfulfilled orders
+
+This ensures that all customer-facing interactions are transparent and provide necessary explanations without revealing sensitive internal information. 
+
+## Reflection Report
+
+### Architecture Explanation
+
+The architecture of the multi-agent system is designed around a hierarchical orchestration pattern. The **Orchestrator Agent** acts as the main coordinator, delegating tasks to specialized worker agents:
+
+- **Inventory Agent**: Manages stock levels and reordering.
+- **Quoting Agent**: Generates quotes and applies pricing strategies.
+- **Sales Agent**: Handles transactions and delivery schedules.
+- **Financial Agent**: Provides financial reporting and cash flow monitoring.
+
+This separation of concerns ensures scalability and maintainability, allowing each agent to focus on specific tasks without overlap.
+
+### Evaluation Results
+
+The system was tested with 20 customer requests, achieving:
+
+- **6 successful orders**: Fully fulfilled requests.
+- **12 partial fulfillments**: Orders partially fulfilled with arrangements for reordering.
+- **2 unfulfilled requests**: Due to parsing issues.
+
+Key metrics include a final cash balance of $45,738.95 and an inventory value of $3,592.90, with a 90% response quality success rate.
+
+### Suggestions for Improvement
+
+1. **Enhanced Natural Language Processing**: Integrate advanced NLP models to improve item and quantity extraction from complex customer requests, increasing fulfillment rates.
+
+2. **Predictive Analytics for Inventory Management**: Implement machine learning models to forecast demand and optimize stock levels, reducing the likelihood of unfulfilled orders. 
